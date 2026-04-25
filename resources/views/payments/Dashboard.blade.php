@@ -425,7 +425,7 @@
 
     async function fetchLatest() {
         try {
-            const res = await fetch('/api/mpesa/latest');
+            const res = await fetch('/api/payments/latest');
             const data = await res.json();
 
             // Find new payments

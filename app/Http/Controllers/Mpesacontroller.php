@@ -196,4 +196,91 @@ class MpesaController extends Controller
 
         return response()->json($payments);
     }
+    public function stkPush(Request $request): JsonResponse
+{
+    $request->validate([
+        'phone'  => 'required|string',
+        'amount' => 'required|numeric|min:1',
+    ]);
+
+    try {
+        $result = $this->mpesa->stkPush(
+            $request->phone,
+            $request->amount
+        );
+        return response()->json(['success' => true, 'result' => $result]);
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+public function stkCallback(Request $request): JsonResponse
+{
+    $data = $request->all();
+
+    Log::info('STK Push Callback received', $data);
+
+    try {
+        $body       = $data['Body']['stkCallback'] ?? [];
+        $resultCode = $body['ResultCode'] ?? 1;
+
+        if ($resultCode !== 0) {
+            Log::warning('STK Push failed or cancelled', $body);
+            return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);
+        }
+
+        $items = $body['CallbackMetadata']['Item'] ?? [];
+
+        // Extract values from the Item array
+        $amount  = null;
+        $transId = null;
+        $phone   = null;
+
+        foreach ($items as $item) {
+            if ($item['Name'] === 'Amount')             $amount  = $item['Value'] ?? null;
+            if ($item['Name'] === 'MpesaReceiptNumber') $transId = $item['Value'] ?? null;
+            if ($item['Name'] === 'PhoneNumber')        $phone   = $item['Value'] ?? null;
+        }
+
+        Log::info('STK Push extracted data', [
+            'amount'   => $amount,
+            'trans_id' => $transId,
+            'phone'    => $phone,
+        ]);
+
+        // Prevent duplicates
+        if (MpesaPayment::where('trans_id', $transId)->exists()) {
+            Log::warning('Duplicate STK transaction ignored', ['trans_id' => $transId]);
+            return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);
+        }
+
+        MpesaPayment::create([
+            'transaction_type'    => 'STK Push',
+            'trans_id'            => $transId,
+            'trans_time'          => now()->format('YmdHis'),
+            'trans_amount'        => $amount,
+            'business_short_code' => config('Mpesa.shortcode'),
+            'bill_ref_number'     => 'STK',
+            'msisdn'              => (string) $phone,
+            'first_name'          => 'STK',
+            'middle_name'         => '',
+            'last_name'           => 'Customer',
+            'status'              => 'completed',
+            'raw_payload'         => $data,
+        ]);
+
+        Log::info('STK Push payment saved successfully', [
+            'trans_id' => $transId,
+            'amount'   => $amount,
+            'phone'    => $phone,
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('STK Callback error', [
+            'error' => $e->getMessage(),
+            'data'  => $data,
+        ]);
+    }
+
+    return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);
+}
 }

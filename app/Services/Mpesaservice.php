@@ -55,8 +55,8 @@ class MpesaService
         $payload = [
             'ShortCode'       => $this->shortCode,
             'ResponseType'    => 'Completed',  // "Completed" skips validation, auto-accepts all payments
-            'ConfirmationURL' => "{$this->callbackUrl}/api/mpesa/confirmation",
-            'ValidationURL'   => "{$this->callbackUrl}/api/mpesa/validation",
+            'ConfirmationURL' => "{$this->callbackUrl}/api/payments/confirmation",
+            'ValidationURL'   => "{$this->callbackUrl}/api/payments/validation",
         ];
 
         $response = Http::withToken($token)
@@ -74,27 +74,26 @@ class MpesaService
      * Simulate a C2B payment (sandbox only — for testing).
      */
     public function simulateC2BPayment(string $phone, float $amount, string $billRefNumber = 'TEST'): array
-    {
-        $token = $this->getAccessToken();
+{
+    $token = $this->getAccessToken();
 
-        $payload = [
-            'ShortCode'     => $this->shortCode,
-            'CommandID'     => 'CustomerBuyGoodsOnline',  // For Till Number
-            'Amount'        => (int) $amount,
-            'Msisdn'        => $phone,                    // e.g. 254712345678
-            'BillRefNumber' => $billRefNumber,
-        ];
+    $payload = [
+        'ShortCode' => $this->shortCode,
+        'CommandID' => 'CustomerPayBillOnline',
+        'Amount'    => (int) $amount,
+        'Msisdn'    => $phone,
+    ];
 
-        $response = Http::withToken($token)
-            ->post("{$this->baseUrl}/mpesa/c2b/v1/simulate", $payload);
+    $response = Http::withToken($token)
+        ->post("{$this->baseUrl}/mpesa/c2b/v2/simulate", $payload);
 
-        Log::info('M-Pesa C2B Simulation', [
-            'payload'  => $payload,
-            'response' => $response->json(),
-        ]);
+    Log::info('M-Pesa C2B Simulation', [
+        'payload'  => $payload,
+        'response' => $response->json(),
+    ]);
 
-        return $response->json();
-    }
+    return $response->json();
+}
 
     /**
      * Query transaction status (optional utility).
@@ -110,15 +109,48 @@ class MpesaService
             'TransactionID'      => $transactionId,
             'PartyA'             => $this->shortCode,
             'IdentifierType'     => '1',
-            'ResultURL'          => "{$this->callbackUrl}/api/mpesa/status-result",
-            'QueueTimeOutURL'    => "{$this->callbackUrl}/api/mpesa/status-timeout",
+            'ResultURL'          => "{$this->callbackUrl}/api/payments/status-result",
+            'QueueTimeOutURL'    => "{$this->callbackUrl}/api/payments/status-timeout",
             'Remarks'            => 'Check transaction status',
             'Occasion'           => '',
         ];
 
         $response = Http::withToken($token)
-            ->post("{$this->baseUrl}/mpesa/transactionstatus/v1/query", $payload);
+            ->post("{$this->baseUrl}/payments/transactionstatus/v1/query", $payload);
 
         return $response->json();
     }
+    public function stkPush(string $phone, float $amount): array
+{
+    $token     = $this->getAccessToken();
+    $timestamp = now()->format('YmdHis');
+    $passkey   = env('MPESA_PASSKEY');
+    $shortcode = $this->shortCode;
+    
+    $password  = base64_encode($shortcode . $passkey . $timestamp);
+
+    $payload = [
+        'BusinessShortCode' => $shortcode,
+        'Password'          => $password,
+        'Timestamp'         => $timestamp,
+        'TransactionType'   => 'CustomerPayBillOnline',
+        'Amount'            => (int) $amount,
+        'PartyA'            => $phone,
+        'PartyB'            => $shortcode,
+        'PhoneNumber'       => $phone,
+        'CallBackURL' => "{$this->callbackUrl}/api/payments/stk-callback",
+        'AccountReference'  => 'MyBusiness',
+        'TransactionDesc'   => 'Payment for services',
+    ];
+
+    $response = Http::withToken($token)
+        ->post("{$this->baseUrl}/mpesa/stkpush/v1/processrequest", $payload);
+
+    Log::info('STK Push', [
+        'payload'  => $payload,
+        'response' => $response->json(),
+    ]);
+
+    return $response->json();
+}
 }
